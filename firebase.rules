@@ -1,0 +1,93 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null && request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
+
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tier == 'admin';
+    }
+
+    function isBetaTester() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tier == 'beta';
+    }
+
+    function isPremiumUser() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tier == 'premium';
+    }
+
+    function hasValidTimestamp() {
+      return request.resource.data.lastModified is timestamp ||
+             request.resource.data.lastModified is string;
+    }
+
+    function hasValidUserId() {
+      return request.resource.data.userId == request.auth.uid;
+    }
+
+    // User documents
+    match /users/{userId} {
+      // Allow read/write for the user's own document
+      allow read, write: if isAuthenticated() && isOwner(userId);
+      // Allow admins to read and update any user document
+      allow read, update: if isAuthenticated() && isAdmin();
+      // Allow creation of new user documents
+      allow create: if isAuthenticated() && isOwner(userId);
+
+      // Settings collection
+      match /settings/{docId} {
+        allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
+        allow write: if isAuthenticated() && (isOwner(userId) || isAdmin()) && hasValidTimestamp();
+      }
+
+      // Location settings
+      match /settings/location {
+        allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
+        allow write: if isAuthenticated() && isOwner(userId);
+      }
+
+      // Plans collection
+      match /plans/{planId} {
+        allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
+        allow create: if isAuthenticated() && (isOwner(userId) || isAdmin()) && hasValidUserId() && hasValidTimestamp();
+        allow update: if isAuthenticated() && (isOwner(userId) || isAdmin()) && hasValidTimestamp();
+        allow delete: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      }
+
+      // Plant data collection
+      match /plantData/{plantId} {
+        allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
+        allow write: if isAuthenticated() && (isOwner(userId) || isAdmin()) && hasValidTimestamp();
+      }
+
+      // API cache collection
+      match /apiCache/{cacheId} {
+        allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
+        allow write: if isAuthenticated() && (isOwner(userId) || isAdmin()) && hasValidTimestamp();
+      }
+
+      // Weather data collection
+      match /weatherData/{docId} {
+        allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
+        allow write: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      }
+    }
+
+    // Global collections
+    match /sharedPlantData/{docId} {
+      allow read: if isAuthenticated() && (isPremiumUser() || isBetaTester() || isAdmin());
+      allow write: if isAuthenticated() && isAdmin();
+    }
+
+    // Default deny all other access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
